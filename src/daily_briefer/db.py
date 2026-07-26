@@ -22,25 +22,24 @@ def _client(config: Config):
 # --- User Preferences ---
 
 def add_preference(config: Config, keyword: str, weight: int = 5) -> bool:
-    """Add or increment a preference keyword."""
+    """Add or increment a preference keyword (case-insensitive)."""
     client = _client(config)
-    # Check if exists (case-insensitive via Postgres ilike)
-    row = client.table("user_preferences").select("id, weight").match(
-        {"LOWER(keyword)": keyword.lower()}
-    ).execute()
+    row = client.table("user_preferences").select("id, keyword, weight").execute()
+    prefs = row.data if row.data else []
 
-    if row.data and len(row.data) > 0:
-        rec = row.data[0]
-        new_weight = max(rec["weight"] + weight, weight)
-        client.table("user_preferences").update({
-            "weight": new_weight,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", rec["id"]).execute()
-    else:
-        client.table("user_preferences").insert({
-            "keyword": keyword,
-            "weight": weight,
-        }).execute()
+    for rec in prefs:
+        if rec["keyword"].lower() == keyword.lower():
+            new_weight = max(rec["weight"] + weight, weight)
+            client.table("user_preferences").update({
+                "weight": new_weight,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", rec["id"]).execute()
+            return True
+
+    client.table("user_preferences").insert({
+        "keyword": keyword,
+        "weight": weight,
+    }).execute()
     return True
 
 
