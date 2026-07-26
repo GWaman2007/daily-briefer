@@ -1,54 +1,65 @@
-"""Configuration loaded from environment variables."""
+"""Configuration loader with environment variable support."""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from dataclasses import dataclass, field, fields
+from typing import Optional
 
 
-def _env(key: str, default: str = "") -> str:
-    return os.environ.get(key, default) or default
+# Map of type names to actual types (handles `from __future__ import annotations`)
+_TYPE_MAP = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict, "Optional": None}
+
+
+def _env(key: str, default, cast):
+    """Get environment variable with optional cast."""
+    # With `from __future__ import annotations`, f.type is a string like "int"
+    if isinstance(cast, str):
+        cast = _TYPE_MAP.get(cast)
+
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    if cast:
+        value = cast(value)
+    return value
 
 
 @dataclass
 class Config:
-    gmail_address: str = ""
-    gmail_app_password: str = ""
+    """Application configuration, loaded from environment variables."""
 
-    tavily_api_key: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_model_fallback: str = "gemini-3.1-flash-lite"
+    tavily_api_key: str = ""
+    gmail_address: str = ""
+    gmail_app_password: str = ""
+    brief_name: str = "User"
 
-    brief_name: str = "Master"
+    # Supabase
+    supabase_url: str = ""
+    supabase_key: str = ""
 
-    brief_retention_days: int = 30
-    brief_time: str = "07:00"
-    brief_timezone: str = "UTC"
-
+    # Email polling
     gmail_poll_interval: int = 60
 
-    articles_per_source: int = 10
+    # Database
+    db_path: str = "daily_briefer.db"
 
-    @property
-    def db_path(self) -> str:
-        return os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "daily_briefer.db"))
+    # Brief settings
+    brief_retention_days: int = 30
+
+    # Reply history
+    reply_retention_days: int = 30
+
+    def __post_init__(self):
+        """Load config from environment variables."""
+        for f in fields(self):
+            val = _env(f.name.upper(), f.default, f.type)
+            if val is not None:
+                setattr(self, f.name, val)
 
 
 def load_config() -> Config:
-    primary = _env("GEMINI_MODEL") or "gemini-3.5-flash-lite"
-    fallback = _env("GEMINI_MODEL_FALLBACK") or "gemini-3.1-flash-lite"
-    return Config(
-        gmail_address=_env("GMAIL_ADDRESS"),
-        gmail_app_password=_env("GMAIL_APP_PASSWORD"),
-        tavily_api_key=_env("TAVILY_API_KEY"),
-        gemini_api_key=_env("GEMINI_API_KEY"),
-        gemini_model=primary,
-        gemini_model_fallback=fallback,
-        brief_name=_env("BRIEF_NAME", "Master"),
-        gmail_poll_interval=int(_env("GMAIL_POLL_INTERVAL", "60")),
-    )
+    """Load configuration from environment variables."""
+    return Config()
