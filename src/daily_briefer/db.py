@@ -132,14 +132,17 @@ def cleanup_old_events(config: Config) -> int:
     """Delete events that are past their date and already delivered/expired."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     client = _client(config)
-    # Delete delivered/expired events older than today
-    deleted = client.table("events").delete().match(
+    deleted = 0
+    # Delete delivered events older than today
+    resp = client.table("events").delete().match(
         {"status": "delivered"}
     ).lt("date", today).execute()
+    deleted += len(resp.data) if resp.data else 0
     # Also delete expired events
-    deleted += client.table("events").delete().match(
+    resp = client.table("events").delete().match(
         {"status": "expired"}
     ).lt("date", today).execute()
+    deleted += len(resp.data) if resp.data else 0
     return deleted
 
 
@@ -191,8 +194,8 @@ def set_brief_sent(config: Config, date: str) -> None:
 def cleanup_old_briefs(config: Config) -> int:
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=config.brief_retention_days)).strftime("%Y-%m-%d")
     client = _client(config)
-    deleted = client.table("briefs").delete().lt("date", cutoff_date).execute()
-    return deleted
+    resp = client.table("briefs").delete().lt("date", cutoff_date).execute()
+    return len(resp.data) if resp.data else 0
 
 
 # --- Reply History ---
