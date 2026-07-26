@@ -88,6 +88,21 @@ class DailyBrieferAgent:
 
         system_prompt = self._build_system_prompt(context)
 
+        # Force one initial search if there are preferences
+        if context.get("preferences"):
+            iteration += 1
+            print("[Briefing] Initial search...")
+            search_queries.append("daily news today")
+            results = await self.tavily.search("daily news today", max_results=10)
+            all_articles.extend(results)
+            search_count += 1
+            model_memory.append({
+                "role": "user",
+                "content": f"Initial search completed. Articles found: {len(results)}. "
+                           f"Use this information and/or perform more targeted searches.\n"
+                           f"Latest Tavily results: {json.dumps(all_articles[-10:], indent=2) if all_articles else 'None yet'}"
+            })
+
         while iteration < max_iterations:
             iteration += 1
             model_memory.append({
