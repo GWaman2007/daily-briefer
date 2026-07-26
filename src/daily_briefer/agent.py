@@ -36,7 +36,11 @@ class DailyBrieferAgent:
         self.config = config or load_config()
         init_db(self.config)
         self.tavily = TavilyFetcher(self.config.tavily_api_key)
-        self.gemini = GeminiClient(self.config.gemini_api_key, self.config.gemini_model)
+        self.gemini = GeminiClient(
+            self.config.gemini_api_key,
+            self.config.gemini_model,
+            self.config.gemini_model_fallback,
+        )
         self.gmail = GmailClient(self.config)
 
     async def scrape_url(self, url: str, max_words: int = 2000) -> str:

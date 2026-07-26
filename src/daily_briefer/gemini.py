@@ -20,54 +20,82 @@ from daily_briefer.db import (
 class GeminiClient:
     """Client for Google Gemini API."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.5-flash-lite",
+                 fallback_model: str = "gemini-3.1-flash-lite"):
         self.api_key = api_key
         self.model = model
-        self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        self.fallback_model = fallback_model
+        self.base_url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent"
+        )
 
     async def _chat(self, messages: list[dict], system_prompt: str = "",
-                    tools: list[dict] | None = None, max_retries: int = 3) -> dict:
-        """Send a chat message to Gemini and return the response."""
-        for attempt in range(max_retries):
+                    tools: list[dict] | None = None, max_retries: int = 3,
+                    use_fallback: bool = False) -> dict:
+        """Send a chat message to Gemini and return the response.
+
+        On HTTP 429 (rate limit) falls back to ``fallback_model`` after one
+        attempt with the primary model.
+        """
+        import asyncio
+
+        url = self.base_url
+        attempts = 0
+        did_fallback = False
+        delay = 2
+
+        while True:
             try:
-                contents = []
-                if system_prompt:
-                    contents.append({
-                        "role": "user",
-                        "parts": [{"text": system_prompt}],
-                    })
-                for msg in messages:
-                    contents.append({
-                        "role": msg.get("role", "user"),
-                        "parts": [{"text": msg.get("content", "")}],
-                    })
-
-                payload = {
-                    "contents": contents,
-                    "generationConfig": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "top_k": 40,
-                    },
-                }
-                if tools:
-                    payload["tools"] = tools
-
                 async with httpx.AsyncClient(timeout=60) as client:
                     resp = await client.post(
-                        self.base_url,
+                        url,
                         params={"key": self.api_key},
-                        json=payload,
+                        json={
+                            "contents": (
+                                [{"role": "user", "parts": [{"text": system_prompt}]}]
+                                if system_prompt else []
+                            )
+                            + [
+                                {"role": msg.get("role", "user"), "parts": [{"text": msg.get("content", "")}]}
+                                for msg in messages
+                            ],
+                            "generationConfig": {"temperature": 0.7, "top_p": 0.9, "top_k": 40},
+                            **({"tools": tools} if tools else {}),
+                        },
                     )
                     resp.raise_for_status()
                     return resp.json()
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise
-                await httpx.AsyncClient().aclose()
-                await httpx.AsyncClient().aclose()
-                import asyncio
-                await asyncio.sleep(2 ** attempt)
+
+            except httpx.HTTPStatusError as exc:
+                attempts += 1
+
+                # 429 → fall back to the other model once
+                if exc.response.status_code == 429 and not did_fallback and self.fallback_model:
+                    did_fallback = True
+                    url = (
+                        f"https://generativelanguage.googleapis.com/v1beta/models/"
+                        f"{self.fallback_model}:generateContent"
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+
+                # Retry transient server errors (5xx)
+                if exc.response.status_code >= 500 and attempts < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+
+                raise
+
+            except Exception:
+                attempts += 1
+                if attempts < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                raise
 
     async def generate_brief(self, context: dict) -> str:
         """Generate a daily news brief based on context."""

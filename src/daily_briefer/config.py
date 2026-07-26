@@ -22,6 +22,7 @@ class Config:
     tavily_api_key: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_model_fallback: str = "gemini-3.1-flash-lite"
 
     brief_name: str = "Master"
 
@@ -39,12 +40,15 @@ class Config:
 
 
 def load_config() -> Config:
+    primary = _env("GEMINI_MODEL") or "gemini-3.5-flash-lite"
+    fallback = _env("GEMINI_MODEL_FALLBACK") or "gemini-3.1-flash-lite"
     return Config(
         gmail_address=_env("GMAIL_ADDRESS"),
         gmail_app_password=_env("GMAIL_APP_PASSWORD"),
         tavily_api_key=_env("TAVILY_API_KEY"),
         gemini_api_key=_env("GEMINI_API_KEY"),
-        gemini_model=_env("GEMINI_MODEL") or "gemini-3.6-flash",
+        gemini_model=primary,
+        gemini_model_fallback=fallback,
         brief_name=_env("BRIEF_NAME", "Master"),
         gmail_poll_interval=int(_env("GMAIL_POLL_INTERVAL", "60")),
     )
