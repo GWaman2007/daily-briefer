@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  daily-briefer:
+    build: .
+    container_name: daily-briefer
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "from daily_briefer.config import load_config; c = load_config(); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
