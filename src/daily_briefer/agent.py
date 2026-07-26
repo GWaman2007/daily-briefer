@@ -84,6 +84,7 @@ class DailyBrieferAgent:
         pending_finds = []
         search_queries = []
         model_memory = []
+        search_count = 0  # Track if model has searched yet
 
         system_prompt = self._build_system_prompt(context)
 
@@ -176,6 +177,8 @@ class DailyBrieferAgent:
                             results = await self.tavily.search(q, max_results=10)
                             search_results.extend(results)
 
+                        search_count += 1
+
                         all_articles.extend(search_results)
                         # Deduplicate
                         seen = set()
@@ -200,9 +203,11 @@ class DailyBrieferAgent:
 
                     elif func["name"] == "generate_brief":
                         brief = args.get("brief", "")
-                        if brief:
+                        if brief and search_count > 0:
                             model_memory[-1]["content"] += f"\n[Brief generated: {len(brief)} characters]"
                             return brief
+                        else:
+                            model_memory[-1]["content"] += "\n[ERROR: You must call search_tavily before generate_brief. Search first!]"
 
                 elif "text" in part:
                     model_memory[-1]["content"] += part["text"]
