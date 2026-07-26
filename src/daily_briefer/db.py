@@ -8,6 +8,11 @@ from typing import Any, Generator
 from daily_briefer.config import Config
 
 
+def init_db(config: Config) -> None:
+    """No-op for Supabase — tables are created via schema.sql."""
+    pass
+
+
 def _client(config: Config):
     """Get or create a Supabase client."""
     from supabase import create_client, Client
@@ -163,6 +168,24 @@ def get_recent_briefs(config: Config, n: int = 7) -> list[dict]:
         "date", desc=True
     ).limit(n).execute()
     return row.data if row.data else []
+
+
+def get_brief_by_date(config: Config, date: str) -> str | None:
+    """Get brief content for a given date."""
+    client = _client(config)
+    row = client.table("briefs").select("brief_content").eq("date", date).limit(1).execute()
+    if row.data and len(row.data) > 0:
+        return row.data[0].get("brief_content")
+    return None
+
+
+def set_brief_sent(config: Config, date: str) -> None:
+    """Mark a brief as sent."""
+    from datetime import datetime, timezone
+    client = _client(config)
+    client.table("briefs").update({"email_sent_at": datetime.now(timezone.utc).isoformat()}).eq(
+        "date", date
+    ).execute()
 
 
 def cleanup_old_briefs(config: Config) -> int:

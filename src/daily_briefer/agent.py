@@ -10,7 +10,6 @@ from typing import Any
 from daily_briefer.config import Config, load_config
 from daily_briefer.db import (
     init_db,
-    get_conn,
     get_preferences,
     get_all_events,
     add_preference,
@@ -23,6 +22,8 @@ from daily_briefer.db import (
     cleanup_old_events,
     mark_event_delivered,
     get_pending_events,
+    get_brief_by_date,
+    set_brief_sent,
 )
 from daily_briefer.news import TavilyFetcher
 from daily_briefer.gemini import GeminiClient
@@ -380,13 +381,9 @@ RULES:
         if mode == "brief":
             print("[Briefing] Running daily briefing...")
             result = await self.run_daily_briefing()
-            # Retrieve brief content for sending
-            with get_conn(self.config) as conn:
-                row = conn.execute(
-                    "SELECT brief_content FROM briefs WHERE date = ?",
-                    (result['date'],),
-                ).fetchone()
-                brief_content = row["brief_content"] if row else "Brief not generated."
+            brief_content = get_brief_by_date(self.config, result['date'])
+            if not brief_content:
+                brief_content = "Brief not generated."
             success = await self.send_brief_email(brief_content)
             print(f"[Briefing] Brief {'sent' if success else 'failed to send'} with {result['preferences_count']} preferences and {result['events_count']} events")
             return
@@ -474,16 +471,10 @@ RULES:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         if brief_content is None:
-            # Read from DB
-            with get_conn(self.config) as conn:
-                row = conn.execute(
-                    "SELECT brief_content FROM briefs WHERE date = ?",
-                    (date,),
-                ).fetchone()
-                if row and row["brief_content"]:
-                    brief_content = row["brief_content"]
-                else:
-                    brief_content = f"# Daily Briefing — {date}\n\nNo brief available."
+            # Read from Supabase
+            brief_content = get_brief_by_date(self.config, date)
+            if not brief_content:
+                brief_content = f"# Daily Briefing — {date}\n\nNo brief available."
 
         success = await self.gmail.send_email(
             to=self.config.gmail_address,
@@ -492,12 +483,8 @@ RULES:
         )
 
         if success:
-            # Mark email as sent in DB
-            with get_conn(self.config) as conn:
-                conn.execute(
-                    "UPDATE briefs SET email_sent_at = ? WHERE date = ? AND email_sent_at IS NULL",
-                    (datetime.now(timezone.utc).isoformat(), date),
-                )
+            # Mark email as sent in Supabase
+            set_brief_sent(self.config, date)
 
         return success
 
