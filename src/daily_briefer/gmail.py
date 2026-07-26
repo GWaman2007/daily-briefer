@@ -53,8 +53,8 @@ class GmailClient:
             mail.login(self.address, self.password)
             mail.select("INBOX")
 
-            # Search for unread emails (exclude our own)
-            status, messages = mail.search(None, '(UNSEEN FROM "')
+            # Search for unread emails
+            status, messages = mail.search(None, '(UNSEEN)')
             if status != "OK":
                 mail.logout()
                 return None

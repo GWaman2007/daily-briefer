@@ -35,8 +35,16 @@ class Config:
 
     @property
     def db_path(self) -> str:
-        return os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "daily_briefer.db"))
+        return os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "daily_briefer.db"))
 
 
 def load_config() -> Config:
-    return Config()
+    return Config(
+        gmail_address=_env("GMAIL_ADDRESS"),
+        gmail_app_password=_env("GMAIL_APP_PASSWORD"),
+        tavily_api_key=_env("TAVILY_API_KEY"),
+        gemini_api_key=_env("GEMINI_API_KEY"),
+        gemini_model=_env("GEMINI_MODEL") or "gemini-3.6-flash",
+        brief_name=_env("BRIEF_NAME", "Master"),
+        gmail_poll_interval=int(_env("GMAIL_POLL_INTERVAL", "60")),
+    )
