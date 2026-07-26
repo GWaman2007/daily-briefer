@@ -3,7 +3,7 @@ name: DailyBriefer
 # Run every hour (or manually)
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '30 2 * * *'
   workflow_dispatch:
 
 jobs:
