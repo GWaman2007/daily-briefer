@@ -44,10 +44,15 @@ def add_preference(config: Config, keyword: str, weight: int = 5) -> bool:
 
 
 def remove_preference(config: Config, keyword: str) -> None:
+    """Remove a preference keyword (case-insensitive)."""
     client = _client(config)
-    client.table("user_preferences").delete().match(
-        {"LOWER(keyword)": keyword.lower()}
-    ).execute()
+    row = client.table("user_preferences").select("id, keyword").execute()
+    prefs = row.data if row.data else []
+
+    for rec in prefs:
+        if rec["keyword"].lower() == keyword.lower():
+            client.table("user_preferences").delete().eq("id", rec["id"]).execute()
+            break
 
 
 def get_preferences(config: Config) -> list[dict]:
