@@ -2,20 +2,20 @@ name: DailyBriefer
 
 on:
   schedule:
-    # Daily brief schedule at 23:30 UTC (5:00 AM IST)
+    # Production Daily Brief Schedule at 23:30 UTC (5:00 AM IST)
     - cron: '30 23 * * *'
-    # Reply check schedule every 5 hours
+    # Production Reply Polling Schedule every 5 hours
     - cron: '0 */5 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Execution mode'
+        description: 'Execution mode for test run'
         required: false
-        default: 'auto'
+        default: 'brief'
         type: choice
         options:
-          - auto
           - brief
+          - auto
           - reply
           - once
 
