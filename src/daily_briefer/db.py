@@ -272,16 +272,20 @@ def get_user_profile(config: Config, user_email: str | None = None) -> dict:
             }
         
         # Try checking id=1 for backwards compatibility with single-user schema
-        row_id = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
-        if row_id.data and len(row_id.data) > 0:
-            rec = row_id.data[0]
-            return {
-                "user_email": target_email,
-                "preferences_summary": rec.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
-                "about_user": rec.get("about_user") or DEFAULT_ABOUT_USER,
-            }
+        try:
+            row_id = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
+            if row_id.data and len(row_id.data) > 0:
+                rec = row_id.data[0]
+                return {
+                    "user_email": target_email,
+                    "preferences_summary": rec.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
+                    "about_user": rec.get("about_user") or DEFAULT_ABOUT_USER,
+                }
+        except Exception:
+            pass
     except Exception as e:
         print(f"[DB WARN] Could not fetch user_profile for '{target_email}': {e}")
+
 
     # Fallback to user_preferences table
     try:
