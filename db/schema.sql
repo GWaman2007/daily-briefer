@@ -3,7 +3,7 @@
 -- User Profile (Living memory summary per user email)
 CREATE TABLE IF NOT EXISTS user_profile (
     user_email TEXT PRIMARY KEY,
-    preferences_summary TEXT NOT NULL DEFAULT 'Focus on general world news, technology, AI breakthroughs, and major global events. Clear, engaging tone.',
+    preferences_summary TEXT NOT NULL DEFAULT 'Focus on general world news and major global events. Clear, engaging, neutral tone.',
     about_user TEXT NOT NULL DEFAULT 'No data recorded yet.',
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
