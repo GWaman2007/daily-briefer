@@ -1,46 +1,47 @@
--- DailyBriefer Supabase Schema
--- Run this in Supabase SQL Editor
+-- Schema for DailyBriefer
 
-CREATE TABLE IF NOT EXISTS user_preferences (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    keyword TEXT UNIQUE NOT NULL,
-    weight INTEGER DEFAULT 5,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    date TEXT NOT NULL,
-    description TEXT NOT NULL,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS briefs (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    date TEXT UNIQUE NOT NULL,
-    email_sent_at TIMESTAMPTZ,
-    preferences_snapshot TEXT,
-    brief_content TEXT
-);
-
-CREATE TABLE IF NOT EXISTS reply_history (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    email_subject TEXT NOT NULL,
-    email_body TEXT NOT NULL,
-    processed_at TIMESTAMPTZ DEFAULT NOW(),
-    changes_applied TEXT
-);
-
+-- User Profile (Living memory summary per user email)
 CREATE TABLE IF NOT EXISTS user_profile (
-    id INT PRIMARY KEY DEFAULT 1,
+    user_email TEXT PRIMARY KEY,
     preferences_summary TEXT NOT NULL DEFAULT 'Focus on general world news, technology, AI breakthroughs, and major global events. Clear, engaging tone.',
     about_user TEXT NOT NULL DEFAULT 'No data recorded yet.',
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_preferences_weight ON user_preferences(weight DESC);
-CREATE INDEX IF NOT EXISTS idx_events_date_status ON events(date, status);
-CREATE INDEX IF NOT EXISTS idx_briefs_date ON briefs(date);
+-- Legacy Preferences (topics/keywords with weights)
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id SERIAL PRIMARY KEY,
+    keyword TEXT UNIQUE NOT NULL,
+    weight FLOAT DEFAULT 1.0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
+-- Sent Briefs History
+CREATE TABLE IF NOT EXISTS briefs (
+    id SERIAL PRIMARY KEY,
+    date DATE UNIQUE NOT NULL,
+    content TEXT NOT NULL,
+    preferences_snapshot JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    email_sent_at TIMESTAMPTZ
+);
+
+-- Upcoming Events & Reminders
+CREATE TABLE IF NOT EXISTS events (
+    id SERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    description TEXT NOT NULL,
+    category TEXT DEFAULT 'general',
+    is_delivered BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- User Reply Log
+CREATE TABLE IF NOT EXISTS user_replies (
+    id SERIAL PRIMARY KEY,
+    received_at TIMESTAMPTZ DEFAULT NOW(),
+    subject TEXT,
+    body TEXT NOT NULL,
+    actions_taken JSONB,
+    ai_response TEXT
+);

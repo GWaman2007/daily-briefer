@@ -343,11 +343,16 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         return text
 
     async def process_user_reply(self, email: dict) -> tuple[str, dict]:
-        """Process a user reply email and update living memory profile.
+        """Process a user reply email and update living memory profile per sender email.
 
         Returns (reply_text, changes_applied).
         """
-        current_profile = get_user_profile(self.config)
+        import re
+        raw_from = email.get("from", "")
+        match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', raw_from)
+        sender_email = match.group(0).lower() if match else self.config.gmail_address
+
+        current_profile = get_user_profile(self.config, user_email=sender_email)
         current_events = get_all_events(self.config)
 
         # Let Gemini process the reply and update memory summaries
@@ -365,6 +370,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
                 self.config,
                 updated_prefs or current_profile["preferences_summary"],
                 updated_about or current_profile["about_user"],
+                user_email=sender_email,
             )
 
         event_action = result.get("event_action")
@@ -378,6 +384,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         save_reply(
             self.config,
             email["subject"],
+
             email["body"],
             json.dumps(result),
         )

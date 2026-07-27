@@ -229,19 +229,32 @@ DEFAULT_PREFERENCES_SUMMARY = (
 DEFAULT_ABOUT_USER = "No data recorded yet."
 
 
-def get_user_profile(config: Config) -> dict:
-    """Get the living user profile summary (preferences + about info), with fallback to user_preferences table."""
+def get_user_profile(config: Config, user_email: str | None = None) -> dict:
+    """Get the living user profile summary for a specific user_email (with fallbacks)."""
+    target_email = (user_email or config.gmail_address or "default").strip().lower()
+
     try:
         client = _client(config)
-        row = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
+        row = client.table("user_profile").select("user_email, preferences_summary, about_user").eq("user_email", target_email).limit(1).execute()
         if row.data and len(row.data) > 0:
             rec = row.data[0]
             return {
+                "user_email": target_email,
+                "preferences_summary": rec.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
+                "about_user": rec.get("about_user") or DEFAULT_ABOUT_USER,
+            }
+        
+        # Try checking id=1 for backwards compatibility with single-user schema
+        row_id = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
+        if row_id.data and len(row_id.data) > 0:
+            rec = row_id.data[0]
+            return {
+                "user_email": target_email,
                 "preferences_summary": rec.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
                 "about_user": rec.get("about_user") or DEFAULT_ABOUT_USER,
             }
     except Exception as e:
-        print(f"[DB WARN] Could not fetch user_profile: {e}")
+        print(f"[DB WARN] Could not fetch user_profile for '{target_email}': {e}")
 
     # Fallback to user_preferences table
     try:
@@ -260,23 +273,38 @@ def get_user_profile(config: Config) -> dict:
                     keywords.append(kw)
 
             if stored_pref:
-                return {"preferences_summary": stored_pref, "about_user": stored_about}
+                return {"user_email": target_email, "preferences_summary": stored_pref, "about_user": stored_about}
             if keywords:
                 combined = ", ".join(keywords)
-                return {"preferences_summary": f"Focus on: {combined}", "about_user": stored_about}
+                return {"user_email": target_email, "preferences_summary": f"Focus on: {combined}", "about_user": stored_about}
     except Exception as e:
         print(f"[DB WARN] Could not fetch fallback preferences: {e}")
 
     return {
+        "user_email": target_email,
         "preferences_summary": DEFAULT_PREFERENCES_SUMMARY,
         "about_user": DEFAULT_ABOUT_USER,
     }
 
 
-def update_user_profile(config: Config, preferences_summary: str, about_user: str) -> bool:
-    """Upsert living user profile summary, with fallback to user_preferences table."""
+def update_user_profile(config: Config, preferences_summary: str, about_user: str, user_email: str | None = None) -> bool:
+    """Upsert living user profile summary for a specific user_email."""
+    target_email = (user_email or config.gmail_address or "default").strip().lower()
     pref_clean = preferences_summary.strip()
     about_clean = about_user.strip()
+
+    try:
+        client = _client(config)
+        # Try upserting with user_email as primary key
+        client.table("user_profile").upsert({
+            "user_email": target_email,
+            "preferences_summary": pref_clean,
+            "about_user": about_clean,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="user_email").execute()
+        return True
+    except Exception as e:
+        print(f"[DB WARN] Failed to update user_profile with user_email, trying id=1 fallback: {e}")
 
     try:
         client = _client(config)
@@ -288,7 +316,7 @@ def update_user_profile(config: Config, preferences_summary: str, about_user: st
         }, on_conflict="id").execute()
         return True
     except Exception as e:
-        print(f"[DB WARN] Failed to update user_profile table, using user_preferences fallback: {e}")
+        print(f"[DB WARN] Failed id=1 upsert, using user_preferences fallback: {e}")
 
     # Fallback: Save to user_preferences table
     try:
@@ -298,5 +326,6 @@ def update_user_profile(config: Config, preferences_summary: str, about_user: st
     except Exception as e:
         print(f"[DB ERROR] Failed fallback update: {e}")
         return False
+
 
 
