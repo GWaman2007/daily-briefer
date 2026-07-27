@@ -133,21 +133,22 @@ def get_all_events(config: Config) -> list[dict]:
 
 
 def cleanup_old_events(config: Config) -> int:
-    """Delete events that are past their date and already delivered/expired."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Auto-expire and delete events that are past their date."""
+    from datetime import datetime, timezone, timedelta
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    today_ist = datetime.now(ist_tz).strftime("%Y-%m-%d")
     client = _client(config)
     deleted = 0
-    # Delete delivered events older than today
-    resp = client.table("events").delete().match(
-        {"status": "delivered"}
-    ).lt("date", today).execute()
-    deleted += len(resp.data) if resp.data else 0
-    # Also delete expired events
-    resp = client.table("events").delete().match(
-        {"status": "expired"}
-    ).lt("date", today).execute()
-    deleted += len(resp.data) if resp.data else 0
+    try:
+        # Mark pending events with date < today_ist as expired
+        client.table("events").update({"status": "expired"}).eq("status", "pending").lt("date", today_ist).execute()
+        # Delete delivered or expired events past their date
+        resp = client.table("events").delete().in_("status", ["delivered", "expired"]).lt("date", today_ist).execute()
+        deleted += len(resp.data) if resp.data else 0
+    except Exception as e:
+        print(f"[DB WARN] Could not cleanup old events: {e}")
     return deleted
+
 
 
 # --- Briefs ---
