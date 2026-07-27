@@ -92,8 +92,22 @@ class DailyBrieferAgent:
         model_memory = []
 
         # Perform initial search based on user_preferences summary
-        pref_summary = user_profile.get("preferences_summary", "general technology world news")
-        initial_queries = [f"{pref_summary[:60]} news today", "top technology breaking news today"]
+        pref_summary = user_profile.get("preferences_summary", "")
+        initial_queries = []
+
+        if pref_summary:
+            import re
+            # Extract key topic phrases by splitting on clauses, commas, and conjunctions
+            raw_parts = [p.strip() for p in re.split(r'[,.;]|\b(?:and|also|focus on|with|including|prefers|tone|style)\b', pref_summary, flags=re.IGNORECASE) if p.strip()]
+            for part in raw_parts:
+                part_clean = part.strip()
+                if len(part_clean) >= 3 and not any(w in part_clean.lower() for w in ["clear", "engaging", "tone", "style", "slang", "bullet", "format"]):
+                    initial_queries.append(f"{part_clean} news today")
+                if len(initial_queries) >= 3:
+                    break
+
+        if not initial_queries:
+            initial_queries = ["top technology news today", "breaking news today"]
 
         print(f"[Briefing] Performing initial Tavily search for: {', '.join(initial_queries)}...")
         for q in initial_queries:
@@ -105,6 +119,7 @@ class DailyBrieferAgent:
                     all_articles.extend(results)
                 except Exception as e:
                     print(f"[WARN] Tavily search error for '{q}': {e}")
+
 
         # Deduplicate by URL
         seen = set()

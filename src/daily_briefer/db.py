@@ -230,7 +230,7 @@ DEFAULT_ABOUT_USER = "No data recorded yet."
 
 
 def get_user_profile(config: Config) -> dict:
-    """Get the living user profile summary (preferences + about info)."""
+    """Get the living user profile summary (preferences + about info), with fallback to user_preferences table."""
     try:
         client = _client(config)
         row = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
@@ -243,6 +243,30 @@ def get_user_profile(config: Config) -> dict:
     except Exception as e:
         print(f"[DB WARN] Could not fetch user_profile: {e}")
 
+    # Fallback to user_preferences table
+    try:
+        legacy_prefs = get_preferences(config)
+        if legacy_prefs:
+            stored_about = DEFAULT_ABOUT_USER
+            stored_pref = ""
+            keywords = []
+            for p in legacy_prefs:
+                kw = p.get("keyword", "")
+                if kw.startswith("__profile_about__:"):
+                    stored_about = kw.replace("__profile_about__:", "")
+                elif kw.startswith("__profile_prefs__:"):
+                    stored_pref = kw.replace("__profile_prefs__:", "")
+                else:
+                    keywords.append(kw)
+
+            if stored_pref:
+                return {"preferences_summary": stored_pref, "about_user": stored_about}
+            if keywords:
+                combined = ", ".join(keywords)
+                return {"preferences_summary": f"Focus on: {combined}", "about_user": stored_about}
+    except Exception as e:
+        print(f"[DB WARN] Could not fetch fallback preferences: {e}")
+
     return {
         "preferences_summary": DEFAULT_PREFERENCES_SUMMARY,
         "about_user": DEFAULT_ABOUT_USER,
@@ -250,17 +274,29 @@ def get_user_profile(config: Config) -> dict:
 
 
 def update_user_profile(config: Config, preferences_summary: str, about_user: str) -> bool:
-    """Upsert living user profile summary."""
+    """Upsert living user profile summary, with fallback to user_preferences table."""
+    pref_clean = preferences_summary.strip()
+    about_clean = about_user.strip()
+
     try:
         client = _client(config)
         client.table("user_profile").upsert({
             "id": 1,
-            "preferences_summary": preferences_summary.strip(),
-            "about_user": about_user.strip(),
+            "preferences_summary": pref_clean,
+            "about_user": about_clean,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }, on_conflict="id").execute()
         return True
     except Exception as e:
-        print(f"[DB ERROR] Failed to update user_profile: {e}")
+        print(f"[DB WARN] Failed to update user_profile table, using user_preferences fallback: {e}")
+
+    # Fallback: Save to user_preferences table
+    try:
+        add_preference(config, f"__profile_prefs__:{pref_clean}")
+        add_preference(config, f"__profile_about__:{about_clean}")
+        return True
+    except Exception as e:
+        print(f"[DB ERROR] Failed fallback update: {e}")
         return False
+
 
