@@ -343,20 +343,27 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
 
         return text
 
-    async def process_user_reply(self, email: dict) -> tuple[str, dict]:
+    async def process_user_reply(self, email: dict) -> tuple[str | None, dict]:
         """Process a user reply email and update living memory profile per sender email.
 
-        Returns (reply_text, changes_applied).
+        Returns (reply_text, changes_applied). If spam or non-request, reply_text is None.
         """
         import re
         raw_from = email.get("from", "")
         match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', raw_from)
         sender_email = match.group(0).lower() if match else self.config.gmail_address
 
+        # Step 1: Perform Intent Analysis & Spam Check with Gemini
+        intent = await self.gemini.analyze_email_intent(email.get("subject", ""), email.get("body", ""))
+        if not intent.get("is_valid_request", True):
+            reason = intent.get("reason", "Spam/irrelevant content detected")
+            print(f"[Spam Filter] Ignored email from {sender_email}: {reason}")
+            return None, {"is_spam": True, "reason": reason}
+
         current_profile = get_user_profile(self.config, user_email=sender_email)
         current_events = get_all_events(self.config)
 
-        # Let Gemini process the reply and update memory summaries
+        # Step 2: Gemini processes valid reply and updates memory summaries
         result = await self.gemini.process_reply(
             email["subject"],
             email["body"],
@@ -385,7 +392,6 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         save_reply(
             self.config,
             email["subject"],
-
             email["body"],
             json.dumps(result),
         )
@@ -472,15 +478,19 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
             if email:
                 print(f"[Reply] Found unread email: {email['subject']}")
                 reply_text, changes = await self.process_user_reply(email)
-                await self.gmail.send_email(
-                    to=email["from"],
-                    subject=f"Re: {email['subject']}",
-                    body=reply_text,
-                )
+                if reply_text:
+                    await self.gmail.send_email(
+                        to=email["from"],
+                        subject=f"Re: {email['subject']}",
+                        body=reply_text,
+                    )
+                    print(f"[Reply] Sent to {email['from']}: {reply_text}")
+                else:
+                    print(f"[Spam Filter] Skipped auto-reply for non-legitimate request.")
+                
                 email_id = email.get("id", "")
                 if email_id:
                     await self.gmail.mark_as_read(email_id)
-                print(f"[Reply] Sent to {email['from']}: {reply_text}")
             return
 
         if mode == "once":
@@ -489,15 +499,19 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
             if email:
                 print(f"[Reply] Found unread email: {email['subject']}")
                 reply_text, changes = await self.process_user_reply(email)
-                await self.gmail.send_email(
-                    to=email["from"],
-                    subject=f"Re: {email['subject']}",
-                    body=reply_text,
-                )
+                if reply_text:
+                    await self.gmail.send_email(
+                        to=email["from"],
+                        subject=f"Re: {email['subject']}",
+                        body=reply_text,
+                    )
+                    print(f"[Reply] Sent to {email['from']}: {reply_text}")
+                else:
+                    print(f"[Spam Filter] Skipped auto-reply for non-legitimate request.")
+
                 email_id = email.get("id", "")
                 if email_id:
                     await self.gmail.mark_as_read(email_id)
-                print(f"[Reply] Sent to {email['from']}: {reply_text}")
             else:
                 print("[Poll] No new emails. Exiting.")
             return
@@ -509,15 +523,19 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
                 if email:
                     print(f"[Reply] Found unread email: {email['subject']}")
                     reply_text, changes = await self.process_user_reply(email)
-                    await self.gmail.send_email(
-                        to=email["from"],
-                        subject=f"Re: {email['subject']}",
-                        body=reply_text,
-                    )
+                    if reply_text:
+                        await self.gmail.send_email(
+                            to=email["from"],
+                            subject=f"Re: {email['subject']}",
+                            body=reply_text,
+                        )
+                        print(f"[Reply] Sent to {email['from']}: {reply_text}")
+                    else:
+                        print(f"[Spam Filter] Skipped auto-reply for non-legitimate request.")
+
                     email_id = email.get("id", "")
                     if email_id:
                         await self.gmail.mark_as_read(email_id)
-                    print(f"[Reply] Sent to {email['from']}: {reply_text}")
                 else:
                     print(f"[Poll] No new emails. Sleeping for {self.config.gmail_poll_interval}s...")
                 await asyncio.sleep(self.config.gmail_poll_interval)
@@ -528,19 +546,24 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         if email:
             print(f"[Reply] Found unread email: {email['subject']}")
             reply_text, changes = await self.process_user_reply(email)
-            await self.gmail.send_email(
-                to=email["from"],
-                subject=f"Re: {email['subject']}",
-                body=reply_text,
-            )
+            if reply_text:
+                await self.gmail.send_email(
+                    to=email["from"],
+                    subject=f"Re: {email['subject']}",
+                    body=reply_text,
+                )
+                print(f"[Reply] Sent to {email['from']}: {reply_text}")
+            else:
+                print(f"[Spam Filter] Skipped auto-reply for non-legitimate request.")
+
             email_id = email.get("id", "")
             if email_id:
                 await self.gmail.mark_as_read(email_id)
-            print(f"[Reply] Sent to {email['from']}: {reply_text}")
         else:
             print("[Briefing] Running daily briefing...")
             result = await self.run_daily_briefing()
             print(f"[Briefing] Daily brief process completed for {result.get('users_count', 1)} users")
+
 
     async def send_brief_email(self, brief_content: str | None = None, to_email: str | None = None) -> bool:
         """Send the latest brief via HTML email."""

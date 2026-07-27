@@ -238,3 +238,52 @@ Respond with EXACTLY a raw JSON object (no markdown formatting, no explanations)
                 "reply_text": "Understood! Updated your briefing preferences.",
             }
 
+    async def analyze_email_intent(self, email_subject: str, email_body: str) -> dict:
+        """Analyze email subject and body to classify intent and filter spam/junk."""
+        system_prompt = """You are an email intent classifier and spam filter for an AI daily news briefer.
+Your job is to determine whether an incoming email is a legitimate user request/reply vs. spam, automated junk, or irrelevant system notifications.
+
+LEGITIMATE REQUESTS (is_valid_request = true):
+- User giving news topic feedback ("show me tech news", "no politics", "add PC building").
+- User specifying writing style/persona ("explain like GenZ", "grumpy old man", "formal executive").
+- User asking for a news briefing or replying to a daily brief.
+- User adding or removing event reminders.
+- Human user sending a genuine message, greeting, or question.
+
+SPAM / AUTOMATED JUNK / IRRELEVANT (is_valid_request = false):
+- Automated marketing emails, promotional blasts, cold sales emails.
+- Security login alerts (Google, GitHub, etc.), verification codes, password reset emails.
+- Bounce notifications, delivery failure alerts, out-of-office auto-replies.
+- Phishing, financial scams, crypto spam, random non-human system alerts.
+
+Respond ONLY with raw JSON:
+{
+    "is_valid_request": true | false,
+    "reason": "brief explanation"
+}"""
+
+        user_message = {
+            "role": "user",
+            "content": f"Subject: {email_subject}\nBody: {email_body[:1000]}"
+        }
+
+        try:
+            response = await self._chat([user_message], system_prompt=system_prompt)
+            candidates = response.get("candidates", [])
+            if not candidates:
+                return {"is_valid_request": True, "reason": "Default allow"}
+
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            text = "".join(p.get("text", "") for p in parts).strip()
+
+            if text.startswith("```"):
+                lines = [l for l in text.split("\n") if not l.startswith("```")]
+                text = "\n".join(lines).strip()
+
+            return json.loads(text)
+        except Exception as e:
+            print(f"[WARN] Intent classification error: {e}")
+            return {"is_valid_request": True, "reason": "Fallback allow"}
+
+
