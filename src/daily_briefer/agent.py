@@ -83,7 +83,8 @@ class DailyBrieferAgent:
         max_iterations = 5
         iteration = 0
         tavily_searches_used = 0
-        max_tavily_searches = 10
+        max_tavily_searches = 6
+
 
         all_articles = context.get("articles", [])
         user_profile = context.get("user_profile") or get_user_profile(self.config)
@@ -317,7 +318,7 @@ UPCOMING EVENTS & REMINDERS:
 OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
 1. Review the articles and user preferences/style provided above. Strictly adopt the user's requested persona, tone, and style (e.g. GenZ slang, grumpy old man, formal executive, concise bullet points) when writing the briefing!
 2. If you need more specific details on a URL, call `fetch_url`. If you need more search results on a specific topic, call `search_tavily`.
-3. Tavily Search Quota: You have a strict limit of MAX 10 Tavily searches total per briefing run. Manage your query count carefully.
+3. Tavily Search Quota: You have a strict limit of MAX 6 Tavily searches total per briefing run. Manage your query count carefully.
 4. Max 5 Iterations: You have at most 5 turns/passes. Call `generate_brief(brief=...)` with the full markdown text.
 5. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, clickable article links `[Title](url)`, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
 
