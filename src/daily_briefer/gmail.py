@@ -127,19 +127,20 @@ class GmailClient:
         return " ".join(result)
 
     def _is_reply_to_brief(self, subject: str, from_addr: str) -> bool:
-        """Check if the email is likely a reply to our briefing."""
-        # Check if it's from the user
-        if self.address not in from_addr:
+        """Check if the incoming unread email should be processed as a user preference command or reply."""
+        if not from_addr:
             return False
 
-        # Check for reply indicators
-        reply_indicators = [
-            "re:", "reply", "forward", "fw:", "auto-reply"
-        ]
-        subject_lower = subject.lower()
+        from_clean = from_addr.lower()
+        my_addr = (self.address or "").lower()
+        subject_lower = (subject or "").lower()
 
-        # If it looks like a reply or forward, return True
-        return any(indicator in subject_lower for indicator in reply_indicators)
+        # Ignore automated outgoing briefs sent from self to self (unless it is a reply Re:)
+        if my_addr and my_addr in from_clean and not any(k in subject_lower for k in ["re:", "fw:", "reply"]):
+            return False
+
+        return True
+
 
     async def mark_as_read(self, email_id: str) -> bool:
         """Mark an email as read."""
