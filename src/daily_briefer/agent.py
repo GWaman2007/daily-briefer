@@ -270,7 +270,9 @@ class DailyBrieferAgent:
         if all_articles:
             prompt_context = context.copy()
             prompt_context["articles"] = all_articles
+            prompt_context["user_profile"] = user_profile
             return await self.gemini.generate_brief(prompt_context)
+
 
         return self._fallback_brief(context, all_articles)
 
