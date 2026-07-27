@@ -25,6 +25,7 @@ from daily_briefer.db import (
     get_brief_by_date,
     set_brief_sent,
     get_user_profile,
+    get_all_user_profiles,
     update_user_profile,
 )
 from daily_briefer.news import TavilyFetcher
