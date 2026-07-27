@@ -42,8 +42,10 @@ class GeminiClient:
 
         url = self.base_url
         attempts = 0
+        max_retries = 5
         did_fallback = False
         delay = 2
+
 
         while True:
             try:
@@ -70,32 +72,36 @@ class GeminiClient:
             except httpx.HTTPStatusError as exc:
                 attempts += 1
 
-                # 429 → fall back to the other model once
-                if exc.response.status_code == 429 and not did_fallback and self.fallback_model:
+                # 429 or 503/5xx → fall back to the other model if available
+                if exc.response.status_code in (429, 500, 502, 503, 504) and not did_fallback and self.fallback_model:
                     did_fallback = True
                     url = (
                         f"https://generativelanguage.googleapis.com/v1beta/models/"
                         f"{self.fallback_model}:generateContent"
                     )
+                    print(f"[Gemini WARN] Status {exc.response.status_code}, falling back to {self.fallback_model}...")
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
 
-                # Retry transient server errors (5xx)
+                # Retry transient server errors (5xx) with backoff
                 if exc.response.status_code >= 500 and attempts < max_retries:
+                    print(f"[Gemini WARN] Status {exc.response.status_code}, retrying (attempt {attempts}/{max_retries})...")
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
 
                 raise
 
-            except Exception:
+            except Exception as e:
                 attempts += 1
                 if attempts < max_retries:
+                    print(f"[Gemini WARN] Exception {e}, retrying (attempt {attempts}/{max_retries})...")
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
                 raise
+
 
     async def generate_brief(self, context: dict) -> str:
         """Generate a daily news brief based on context with strict persona and style enforcement."""
