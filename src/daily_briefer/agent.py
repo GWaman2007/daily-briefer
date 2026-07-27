@@ -69,66 +69,60 @@ class DailyBrieferAgent:
             return f"[Failed to fetch {url}: {e}]"
 
     async def run_briefing_loop(self, context: dict) -> str:
-        """Run the Tavily search loop until the briefing is complete.
+        """Run the agentic search & synthesis loop.
 
-        This is the core agentic loop:
-        1. Model reviews preferences + events
-        2. Model generates search queries
-        3. Tavily returns results
-        4. Model decides: more searches, fetch URLs, or generate brief
+        Operational constraints:
+        - Max 5 passes / iterations total.
+        - Initial pass generates multiple target search queries.
+        - Strict daily quota of max 10 Tavily searches per run.
+        - Live search budget feedback to the model.
+        - Forces brief synthesis on pass 5.
         """
-        max_iterations = 10
+        max_iterations = 5
         iteration = 0
+        tavily_searches_used = 0
+        max_tavily_searches = 10
+
         all_articles = context.get("articles", [])
         fetched_urls = set()
-        pending_finds = []
         search_queries = []
         model_memory = []
-        search_count = 0  # Track if model has searched yet
 
         system_prompt = self._build_system_prompt(context)
 
-        # Force one initial search if there are preferences
-        if context.get("preferences"):
-            iteration += 1
-            print("[Briefing] Initial search...")
-            search_queries.append("daily news today")
-            results = await self.tavily.search("daily news today", max_results=10)
-            all_articles.extend(results)
-            search_count += 1
-            model_memory.append({
-                "role": "user",
-                "content": f"Initial search completed. Articles found: {len(results)}. "
-                           f"Use this information and/or perform more targeted searches.\n"
-                           f"Latest Tavily results: {json.dumps(all_articles[-10:], indent=2) if all_articles else 'None yet'}"
-            })
-
         while iteration < max_iterations:
             iteration += 1
-            model_memory.append({
-                "role": "user",
-                "content": f"\n\nSearch iteration {iteration}:\n"
-                          f"Articles so far: {len(all_articles)}\n"
-                          f"URLs already fetched: {len(fetched_urls)}\n"
-                          f"Pending URL fetches: {len(pending_finds)}\n"
-                          f"Search queries used: {', '.join(search_queries) if search_queries else 'none yet'}\n"
-                          f"Latest Tavily results: {json.dumps(all_articles[-10:], indent=2) if all_articles else 'None yet'}"
-            })
+            searches_remaining = max_tavily_searches - tavily_searches_used
 
-            # Send to Gemini with tools for searching and fetching
+            status_msg = (
+                f"Pass {iteration} of {max_iterations}:\n"
+                f"- Tavily searches used so far: {tavily_searches_used}/{max_tavily_searches} "
+                f"(Remaining budget: {searches_remaining})\n"
+                f"- Articles gathered so far: {len(all_articles)}\n"
+                f"- URLs already fetched: {len(fetched_urls)}\n"
+                f"- Previous search queries: {', '.join(search_queries) if search_queries else 'none yet'}\n"
+            )
+
+            if iteration == 1:
+                status_msg += "\n[ACTION REQUIRED]: Review the user's preferences and events in the system prompt, then generate multiple targeted search queries using search_tavily to cover key interest topics."
+            elif iteration == max_iterations:
+                status_msg += "\n[FINAL PASS WARNING]: This is iteration 5 of 5. You MUST now call generate_brief with the final comprehensive markdown brief based on all gathered information."
+
+            model_memory.append({"role": "user", "content": status_msg})
+
             tools = [
                 {
                     "function_declarations": [
                         {
                             "name": "search_tavily",
-                            "description": "Search Tavily for news articles. Use this when you need more information on a topic.",
+                            "description": f"Search Tavily for news articles. Maximum search budget is {max_tavily_searches} total searches per run.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "queries": {
                                         "type": "ARRAY",
                                         "items": {"type": "STRING"},
-                                        "description": "List of 1-3 search queries to run on Tavily"
+                                        "description": "List of search queries to run on Tavily"
                                     }
                                 },
                                 "required": ["queries"]
@@ -136,7 +130,7 @@ class DailyBrieferAgent:
                         },
                         {
                             "name": "fetch_url",
-                            "description": "Fetch and scrape a specific URL to read its full content. Returns up to 2000 words of text.",
+                            "description": "Fetch and scrape a specific URL to read its full content (up to 2000 words).",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
@@ -167,9 +161,8 @@ class DailyBrieferAgent:
                 }
             ]
 
-            response = await self.gemini._chat([], system_prompt=system_prompt, tools=tools)
+            response = await self.gemini._chat(model_memory, system_prompt=system_prompt, tools=tools)
 
-            # Check for function calls
             candidates = response.get("candidates", [])
             if not candidates:
                 break
@@ -178,7 +171,6 @@ class DailyBrieferAgent:
             parts = content.get("parts", [])
             model_memory.append({"role": "model", "content": ""})
 
-            # Process tool calls
             for part in parts:
                 if "function_call" in part:
                     func = part["function_call"]
@@ -187,25 +179,32 @@ class DailyBrieferAgent:
                     if func["name"] == "search_tavily":
                         queries = args.get("queries", [])
                         search_results = []
+                        quota_exceeded = False
+
                         for q in queries:
+                            if tavily_searches_used >= max_tavily_searches:
+                                quota_exceeded = True
+                                break
+
                             search_queries.append(q)
+                            tavily_searches_used += 1
                             results = await self.tavily.search(q, max_results=10)
                             search_results.extend(results)
 
-                        search_count += 1
-
                         all_articles.extend(search_results)
-                        # Deduplicate
+                        # Deduplicate by URL
                         seen = set()
                         unique = []
                         for a in all_articles:
-                            if a.get("url") not in seen:
+                            if a.get("url") and a.get("url") not in seen:
                                 seen.add(a.get("url"))
                                 unique.append(a)
                         all_articles = unique
 
-                        model_memory[-1]["content"] += f"[Searched: {', '.join(queries)}]\n"
-                        model_memory[-1]["content"] += f"[Results: {len(search_results)} new articles found]"
+                        model_memory[-1]["content"] += f"[Searched queries ({len(queries)}): {', '.join(queries)}]\n"
+                        model_memory[-1]["content"] += f"[Tavily quota used: {tavily_searches_used}/{max_tavily_searches}. New articles found: {len(search_results)}]\n"
+                        if quota_exceeded:
+                            model_memory[-1]["content"] += f"[NOTICE: Daily Tavily search limit of {max_tavily_searches} reached! No further search calls allowed.]\n"
 
                     elif func["name"] == "fetch_url":
                         urls = args.get("urls", [])
@@ -213,49 +212,50 @@ class DailyBrieferAgent:
                         for url in urls:
                             if url not in fetched_urls:
                                 fetched_urls.add(url)
-                                content = await self.scrape_url(url)
-                                model_memory[-1]["content"] += f"\n\n--- {url} ---\n{content[:500]}...\n"
+                                scraped = await self.scrape_url(url)
+                                model_memory[-1]["content"] += f"\n--- {url} ---\n{scraped[:500]}...\n"
 
                     elif func["name"] == "generate_brief":
                         brief = args.get("brief", "")
-                        if brief and search_count > 0:
-                            model_memory[-1]["content"] += f"\n[Brief generated: {len(brief)} characters]"
+                        if brief:
+                            model_memory[-1]["content"] += f"\n[Brief generated successfully: {len(brief)} characters]"
                             return brief
-                        else:
-                            model_memory[-1]["content"] += "\n[ERROR: You must call search_tavily before generate_brief. Search first!]"
 
                 elif "text" in part:
-                    model_memory[-1]["content"] += part["text"]
+                    model_memory[-1]["content"] += part.get("text", "")
 
-        # If we exhausted iterations without generating a brief, make one
+        # If we exhausted 5 iterations without explicit generate_brief call, fallback to summary
         return self._fallback_brief(context, all_articles)
 
     def _build_system_prompt(self, context: dict) -> str:
-        """Build the system prompt for the briefing loop."""
+        """Build the system prompt for the briefing loop with IST datetime context."""
+        from datetime import datetime, timezone, timedelta
+
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist_tz)
+        ist_time_str = now_ist.strftime("%Y-%m-%d (%A) %H:%M IST")
+
         preferences = context.get("preferences", [])
         events = context.get("events", [])
 
-        return f"""You are an AI news briefer called DailyBriefer. Your job is to gather enough information to write a comprehensive daily news briefing for {context.get('user_name', 'the user')}.
+        return f"""You are an AI daily news briefer called DailyBriefer. Your job is to gather breaking & relevant news to synthesize an engaging daily briefing for {context.get('user_name', 'the user')}.
 
-CURRENT USER PREFERENCES:
-{json.dumps(preferences, indent=2) if preferences else "No specific preferences yet."}
+CURRENT IST TIME & DATE:
+{ist_time_str}
 
-UPCOMING EVENTS/REMINDERS:
-{json.dumps(events, indent=2) if events else "No upcoming events."}
+CURRENT USER PREFERENCES (Topics of interest):
+{json.dumps(preferences, indent=2) if preferences else "No specific preferences yet. Focus on top general technology and breaking news."}
 
-YOUR CAPABILITIES:
-1. search_tavily(queries: string[]) — Search Tavily for news articles
-2. fetch_url(urls: string[]) — Scrape specific URLs for full article content
-3. generate_brief(brief: string) — Generate the final briefing
+UPCOMING EVENTS & REMINDERS:
+{json.dumps(events, indent=2) if events else "No upcoming events registered."}
 
-RULES:
-- You MUST use search_tavily to gather news based on user preferences
-- Generate 1-3 specific queries per search (e.g., "AI breakthroughs today", "startup funding news")
-- If an article looks important but you need more detail, use fetch_url
-- You can search multiple rounds if needed — up to 10 iterations
-- You MUST call generate_brief when you have enough information
-- Be thorough but efficient — don't waste iterations
-- The final brief should be in markdown, engaging, and personalized"""
+OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
+1. Pass 1 (Initial Search): You MUST start by calling `search_tavily` with multiple relevant, specific search queries covering the user's top preferences and any upcoming event keywords.
+2. Tavily Search Quota: You have a strict limit of MAX 10 Tavily searches total per briefing run. Manage your query count carefully.
+3. Max 5 Iterations: You have at most 5 turns/passes. You must call `generate_brief(brief=...)` on or before Pass 5.
+4. If an article title or snippet needs deeper context, use `fetch_url`.
+5. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, source links, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
+
 
     def _fallback_brief(self, context: dict, articles: list[dict]) -> str:
         """Generate a brief even if the loop didn't complete normally."""
@@ -485,8 +485,9 @@ RULES:
             print(f"[Briefing] Brief sent with {result['preferences_count']} preferences and {result['events_count']} events")
 
     async def send_brief_email(self, brief_content: str | None = None) -> bool:
-        """Send the latest brief via email."""
+        """Send the latest brief via HTML email."""
         from datetime import datetime, timezone
+        from daily_briefer.formatter import format_brief_html
 
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -496,10 +497,12 @@ RULES:
             if not brief_content:
                 brief_content = f"# Daily Briefing — {date}\n\nNo brief available."
 
+        html_body = format_brief_html(brief_content)
+
         success = await self.gmail.send_email(
             to=self.config.gmail_address,
             subject=f"Daily Brief — {date}",
-            body=brief_content,
+            body=html_body,
         )
 
         if success:
@@ -507,4 +510,5 @@ RULES:
             set_brief_sent(self.config, date)
 
         return success
+
 

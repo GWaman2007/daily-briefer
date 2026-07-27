@@ -69,12 +69,14 @@ def poll(ctx, once):
 
 
 @cli.command()
+@click.option("--mode", "-m", default="auto", type=click.Choice(["auto", "brief", "reply", "once", "poll"]), help="Execution mode")
 @click.pass_context
-def run(ctx):
-    """Run auto mode (check replies, then brief if none)."""
+def run(ctx, mode):
+    """Run specified mode (default: auto)."""
     config = load_config()
     agent = DailyBrieferAgent(config)
-    _run_async(agent.run(mode="auto"))
+    _run_async(agent.run(mode=mode))
+
 
 
 @cli.command(name="list-prefs")

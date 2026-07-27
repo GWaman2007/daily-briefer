@@ -1,10 +1,23 @@
 name: DailyBriefer
 
-# Run every hour (or manually)
 on:
   schedule:
-    - cron: '30 2 * * *'
+    # Daily brief schedule at 23:30 UTC (5:00 AM IST)
+    - cron: '30 23 * * *'
+    # Reply check schedule every 5 hours
+    - cron: '0 */5 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution mode'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - brief
+          - reply
+          - once
 
 jobs:
   run:
@@ -23,8 +36,19 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
+      - name: Determine Run Mode
+        id: run_mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "MODE=${{ inputs.mode }}" >> $GITHUB_ENV
+          elif [ "${{ github.event.schedule }}" = "30 23 * * *" ]; then
+            echo "MODE=brief" >> $GITHUB_ENV
+          else
+            echo "MODE=once" >> $GITHUB_ENV
+          fi
+
       - name: Run DailyBriefer
-        run: python -m daily_briefer.cli run
+        run: python -m daily_briefer.cli run --mode $MODE
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
