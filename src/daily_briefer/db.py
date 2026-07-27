@@ -229,6 +229,33 @@ DEFAULT_PREFERENCES_SUMMARY = (
 DEFAULT_ABOUT_USER = "No data recorded yet."
 
 
+def get_all_user_profiles(config: Config) -> list[dict]:
+    """Get all registered user profiles from user_profile table."""
+    try:
+        client = _client(config)
+        res = client.table("user_profile").select("user_email, preferences_summary, about_user").execute()
+        if res.data and len(res.data) > 0:
+            profiles = []
+            for row in res.data:
+                email_val = row.get("user_email")
+                if email_val:
+                    profiles.append({
+                        "user_email": email_val.strip().lower(),
+                        "preferences_summary": row.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
+                        "about_user": row.get("about_user") or DEFAULT_ABOUT_USER,
+                    })
+            if profiles:
+                return profiles
+    except Exception as e:
+        print(f"[DB WARN] Could not fetch all user_profile rows: {e}")
+
+    # Default fallback profile using config email
+    default_email = (config.gmail_address or "default").strip().lower()
+    default_prof = get_user_profile(config, user_email=default_email)
+    return [default_prof]
+
+
+
 def get_user_profile(config: Config, user_email: str | None = None) -> dict:
     """Get the living user profile summary for a specific user_email (with fallbacks)."""
     target_email = (user_email or config.gmail_address or "default").strip().lower()

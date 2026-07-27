@@ -393,36 +393,39 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         return reply_text, result
 
     async def run_daily_briefing(self) -> dict:
-        """Run the full daily briefing process."""
+        """Run the full daily briefing process for all registered users."""
         from datetime import datetime, timezone
 
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        # Get living profile and events
-        user_profile = get_user_profile(self.config)
+        user_profiles = get_all_user_profiles(self.config)
         events = get_all_events(self.config)
 
-        # Prepare context for the agent
-        context = {
-            "date": date,
-            "user_name": self.config.brief_name,
-            "user_profile": user_profile,
-            "events": events,
-            "articles": [],
-        }
+        delivered_count = 0
+        for profile in user_profiles:
+            target_email = profile.get("user_email", self.config.gmail_address)
+            context = {
+                "date": date,
+                "user_name": self.config.brief_name,
+                "user_profile": profile,
+                "events": events,
+                "articles": [],
+            }
 
-        # Run the briefing loop
-        print("[Briefing] Starting Tavily search loop...")
-        brief_content = await self.run_briefing_loop(context)
+            print(f"[Briefing] Generating brief for user: {target_email}...")
+            brief_content = await self.run_briefing_loop(context)
 
-        # Save brief to DB
-        save_brief_record(
-            self.config,
-            date,
-            brief_content,
-            [{"preferences_summary": user_profile["preferences_summary"], "about_user": user_profile["about_user"]}],
-            email_sent_at=datetime.now(timezone.utc).isoformat(),
-        )
+            # Save brief to DB
+            save_brief_record(
+                self.config,
+                date,
+                brief_content,
+                [{"preferences_summary": profile["preferences_summary"], "about_user": profile["about_user"]}],
+                email_sent_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+            success = await self.send_brief_email(brief_content, to_email=target_email)
+            if success:
+                delivered_count += 1
 
         # Deliver any pending events
         pending = get_pending_events(self.config)
@@ -434,7 +437,8 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         result = {
             "date": date,
             "brief_saved": True,
-            "preferences_count": 1,
+            "users_count": len(user_profiles),
+            "delivered_count": delivered_count,
             "events_count": len(events),
             "delivered_events": delivered_events,
         }
@@ -459,11 +463,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         if mode == "brief":
             print("[Briefing] Running daily briefing...")
             result = await self.run_daily_briefing()
-            brief_content = get_brief_by_date(self.config, result['date'])
-            if not brief_content:
-                brief_content = "Brief not generated."
-            success = await self.send_brief_email(brief_content)
-            print(f"[Briefing] Brief {'sent' if success else 'failed to send'} with {result['preferences_count']} preferences and {result['events_count']} events")
+            print(f"[Briefing] Brief process completed for {result.get('users_count', 1)} users")
             return
 
         if mode == "reply":
@@ -479,7 +479,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
                 email_id = email.get("id", "")
                 if email_id:
                     await self.gmail.mark_as_read(email_id)
-                print(f"[Reply] Sent: {reply_text}")
+                print(f"[Reply] Sent to {email['from']}: {reply_text}")
             return
 
         if mode == "once":
@@ -496,7 +496,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
                 email_id = email.get("id", "")
                 if email_id:
                     await self.gmail.mark_as_read(email_id)
-                print(f"[Reply] Sent: {reply_text}")
+                print(f"[Reply] Sent to {email['from']}: {reply_text}")
             else:
                 print("[Poll] No new emails. Exiting.")
             return
@@ -516,7 +516,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
                     email_id = email.get("id", "")
                     if email_id:
                         await self.gmail.mark_as_read(email_id)
-                    print(f"[Reply] Sent: {reply_text}")
+                    print(f"[Reply] Sent to {email['from']}: {reply_text}")
                 else:
                     print(f"[Poll] No new emails. Sleeping for {self.config.gmail_poll_interval}s...")
                 await asyncio.sleep(self.config.gmail_poll_interval)
@@ -535,19 +535,19 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
             email_id = email.get("id", "")
             if email_id:
                 await self.gmail.mark_as_read(email_id)
-            print(f"[Reply] Sent: {reply_text}")
+            print(f"[Reply] Sent to {email['from']}: {reply_text}")
         else:
             print("[Briefing] Running daily briefing...")
             result = await self.run_daily_briefing()
-            await self.send_brief_email()
-            print(f"[Briefing] Brief sent with {result['preferences_count']} preferences and {result['events_count']} events")
+            print(f"[Briefing] Daily brief process completed for {result.get('users_count', 1)} users")
 
-    async def send_brief_email(self, brief_content: str | None = None) -> bool:
+    async def send_brief_email(self, brief_content: str | None = None, to_email: str | None = None) -> bool:
         """Send the latest brief via HTML email."""
         from datetime import datetime, timezone
         from daily_briefer.formatter import format_brief_html
 
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        target_recipient = (to_email or self.config.gmail_address).strip().lower()
 
         if brief_content is None:
             # Read from Supabase
@@ -558,7 +558,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         html_body = format_brief_html(brief_content)
 
         success = await self.gmail.send_email(
-            to=self.config.gmail_address,
+            to=target_recipient,
             subject=f"Daily Brief — {date}",
             body=html_body,
         )
@@ -568,5 +568,6 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
             set_brief_sent(self.config, date)
 
         return success
+
 
 
