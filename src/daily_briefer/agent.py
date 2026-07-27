@@ -24,6 +24,8 @@ from daily_briefer.db import (
     get_pending_events,
     get_brief_by_date,
     set_brief_sent,
+    get_user_profile,
+    update_user_profile,
 )
 from daily_briefer.news import TavilyFetcher
 from daily_briefer.gemini import GeminiClient
@@ -73,7 +75,7 @@ class DailyBrieferAgent:
 
         Operational constraints:
         - Max 5 passes / iterations total.
-        - Initial pass performs Tavily search for top preferences.
+        - Initial pass performs Tavily search based on user profile preferences.
         - Strict daily quota of max 10 Tavily searches per run.
         - Live search budget feedback to the model.
         - Forces brief synthesis on pass 5.
@@ -84,20 +86,14 @@ class DailyBrieferAgent:
         max_tavily_searches = 10
 
         all_articles = context.get("articles", [])
+        user_profile = context.get("user_profile") or get_user_profile(self.config)
         fetched_urls = set()
         search_queries = []
         model_memory = []
 
-        # Perform initial search based on preferences or default news keywords
-        preferences = context.get("preferences", [])
-        keywords = [p.get("keyword") for p in preferences if isinstance(p, dict) and p.get("keyword")]
-
-        initial_queries = []
-        if keywords:
-            for kw in keywords[:3]:  # Top 3 preferences
-                initial_queries.append(f"{kw} news today")
-        else:
-            initial_queries.append("top technology breaking news today")
+        # Perform initial search based on user_preferences summary
+        pref_summary = user_profile.get("preferences_summary", "general technology world news")
+        initial_queries = [f"{pref_summary[:60]} news today", "top technology breaking news today"]
 
         print(f"[Briefing] Performing initial Tavily search for: {', '.join(initial_queries)}...")
         for q in initial_queries:
@@ -119,7 +115,7 @@ class DailyBrieferAgent:
                 unique.append(a)
         all_articles = unique
 
-        system_prompt = self._build_system_prompt(context, all_articles)
+        system_prompt = self._build_system_prompt(context, all_articles, user_profile)
 
         while iteration < max_iterations:
             iteration += 1
@@ -135,7 +131,7 @@ class DailyBrieferAgent:
             )
 
             if iteration == max_iterations:
-                status_msg += "\n[FINAL PASS WARNING]: This is iteration 5 of 5. You MUST now call generate_brief with the complete, beautifully formatted markdown briefing based on all the articles provided."
+                status_msg += "\n[FINAL PASS WARNING]: This is iteration 5 of 5. You MUST now call generate_brief with the complete, beautifully formatted markdown briefing based on all the articles provided and adopting the requested user persona/tone."
 
             model_memory.append({"role": "user", "content": status_msg})
 
@@ -253,11 +249,9 @@ class DailyBrieferAgent:
                 elif "text" in part:
                     text_content = part.get("text", "")
                     model_memory[-1]["content"] += text_content
-                    # If model outputs brief directly in text without function call
                     if len(text_content.strip()) > 200 and "# Daily" in text_content:
                         return text_content.strip()
 
-        # If we exhausted 5 iterations without explicit generate_brief call, generate brief with Gemini directly or fallback
         if all_articles:
             prompt_context = context.copy()
             prompt_context["articles"] = all_articles
@@ -265,15 +259,16 @@ class DailyBrieferAgent:
 
         return self._fallback_brief(context, all_articles)
 
-    def _build_system_prompt(self, context: dict, articles: list[dict] | None = None) -> str:
-        """Build the system prompt for the briefing loop with IST datetime context."""
+    def _build_system_prompt(self, context: dict, articles: list[dict] | None = None,
+                             user_profile: dict | None = None) -> str:
+        """Build the system prompt for the briefing loop with IST datetime and profile context."""
         from datetime import datetime, timezone, timedelta
 
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now_ist = datetime.now(ist_tz)
         ist_time_str = now_ist.strftime("%Y-%m-%d (%A) %H:%M IST")
 
-        preferences = context.get("preferences", [])
+        profile = user_profile or context.get("user_profile") or get_user_profile(self.config)
         events = context.get("events", [])
         articles_list = articles or []
 
@@ -291,8 +286,11 @@ class DailyBrieferAgent:
 CURRENT IST TIME & DATE:
 {ist_time_str}
 
-CURRENT USER PREFERENCES (Topics of interest):
-{json.dumps(preferences, indent=2) if preferences else "No specific preferences yet. Focus on top general technology and breaking news."}
+ABOUT THE USER:
+{profile.get('about_user', 'No data recorded yet.')}
+
+USER PREFERENCES & STYLE SUMMARY (MAX 200 WORDS):
+{profile.get('preferences_summary', 'Focus on general world news, technology, AI breakthroughs, and major global events. Clear, engaging tone.')}
 
 UPCOMING EVENTS & REMINDERS:
 {json.dumps(events, indent=2) if events else "No upcoming events registered."}
@@ -300,16 +298,14 @@ UPCOMING EVENTS & REMINDERS:
 {formatted_articles}
 
 OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
-1. Review the articles provided above. If you need more specific details on a URL, call `fetch_url`. If you need more search results on a specific topic, call `search_tavily`.
-2. Tavily Search Quota: You have a strict limit of MAX 10 Tavily searches total per briefing run. Manage your query count carefully.
-3. Max 5 Iterations: You have at most 5 turns/passes. Call `generate_brief(brief=...)` with the full markdown text.
-4. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, clickable article links `[Title](url)`, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
-
-
+1. Review the articles and user preferences/style provided above. Strictly adopt the user's requested persona, tone, and style (e.g. GenZ slang, grumpy old man, formal executive, concise bullet points) when writing the briefing!
+2. If you need more specific details on a URL, call `fetch_url`. If you need more search results on a specific topic, call `search_tavily`.
+3. Tavily Search Quota: You have a strict limit of MAX 10 Tavily searches total per briefing run. Manage your query count carefully.
+4. Max 5 Iterations: You have at most 5 turns/passes. Call `generate_brief(brief=...)` with the full markdown text.
+5. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, clickable article links `[Title](url)`, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
 
     def _fallback_brief(self, context: dict, articles: list[dict]) -> str:
         """Generate a brief even if the loop didn't complete normally."""
-        preferences = context.get("preferences", [])
         events = context.get("events", [])
 
         text = f"# Daily News Briefing — {context.get('date', 'Today')}\n\n"
@@ -330,59 +326,47 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         return text
 
     async def process_user_reply(self, email: dict) -> tuple[str, dict]:
-        """Process a user reply and apply changes.
+        """Process a user reply email and update living memory profile.
 
         Returns (reply_text, changes_applied).
         """
-        current_prefs = get_preferences(self.config)
+        current_profile = get_user_profile(self.config)
         current_events = get_all_events(self.config)
 
-        # Let Gemini analyze the reply
+        # Let Gemini process the reply and update memory summaries
         result = await self.gemini.process_reply(
             email["subject"],
             email["body"],
-            current_prefs,
+            current_profile,
             current_events,
         )
 
-        action = result.get("action", "ack")
-        changes = {}
+        updated_prefs = result.get("updated_user_preferences")
+        updated_about = result.get("updated_about_user")
+        if updated_prefs or updated_about:
+            update_user_profile(
+                self.config,
+                updated_prefs or current_profile["preferences_summary"],
+                updated_about or current_profile["about_user"],
+            )
 
-        if action == "add_pref":
-            keyword = result.get("keyword", "")
-            if keyword:
-                add_preference(self.config, keyword)
-                changes["added"] = keyword
+        event_action = result.get("event_action")
+        if isinstance(event_action, dict):
+            action_type = event_action.get("action")
+            if action_type in ("add", "add_event"):
+                add_event(self.config, event_action.get("date", ""), event_action.get("description", ""))
+            elif action_type in ("remove", "remove_event") and event_action.get("event_id"):
+                remove_event(self.config, event_action["event_id"])
 
-        elif action == "remove_pref":
-            keyword = result.get("keyword", "")
-            if keyword:
-                remove_preference(self.config, keyword)
-                changes["removed"] = keyword
-
-        elif action == "add_event":
-            date = result.get("event_date", "")
-            desc = result.get("event_description", "")
-            if date and desc:
-                event_id = add_event(self.config, date, desc)
-                changes["added_event"] = {"id": event_id, "date": date, "description": desc}
-
-        elif action == "remove_event":
-            event_id = result.get("event_id")
-            if event_id:
-                remove_event(self.config, event_id)
-                changes["removed_event"] = event_id
-
-        # Save reply to history
         save_reply(
             self.config,
             email["subject"],
             email["body"],
-            json.dumps(changes),
+            json.dumps(result),
         )
 
-        reply_text = result.get("reply_text", "Got it!")
-        return reply_text, changes
+        reply_text = result.get("reply_text", "Got it! Updated your briefing preferences.")
+        return reply_text, result
 
     async def run_daily_briefing(self) -> dict:
         """Run the full daily briefing process."""
@@ -390,15 +374,15 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
 
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        # Get preferences and events
-        preferences = get_preferences(self.config)
+        # Get living profile and events
+        user_profile = get_user_profile(self.config)
         events = get_all_events(self.config)
 
         # Prepare context for the agent
         context = {
             "date": date,
             "user_name": self.config.brief_name,
-            "preferences": preferences,
+            "user_profile": user_profile,
             "events": events,
             "articles": [],
         }
@@ -412,7 +396,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
             self.config,
             date,
             brief_content,
-            preferences,
+            [{"preferences_summary": user_profile["preferences_summary"], "about_user": user_profile["about_user"]}],
             email_sent_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -426,7 +410,7 @@ OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
         result = {
             "date": date,
             "brief_saved": True,
-            "preferences_count": len(preferences),
+            "preferences_count": 1,
             "events_count": len(events),
             "delivered_events": delivered_events,
         }

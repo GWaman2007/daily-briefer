@@ -219,3 +219,48 @@ def get_recent_replies(config: Config, n: int = 10) -> list[dict]:
         "processed_at", desc=True
     ).limit(n).execute()
     return row.data if row.data else []
+
+
+# --- User Profile (Self-Improving Memory) ---
+
+DEFAULT_PREFERENCES_SUMMARY = (
+    "Focus on general world news, technology, AI breakthroughs, and major global events. Clear, engaging tone."
+)
+DEFAULT_ABOUT_USER = "No data recorded yet."
+
+
+def get_user_profile(config: Config) -> dict:
+    """Get the living user profile summary (preferences + about info)."""
+    try:
+        client = _client(config)
+        row = client.table("user_profile").select("preferences_summary, about_user").eq("id", 1).limit(1).execute()
+        if row.data and len(row.data) > 0:
+            rec = row.data[0]
+            return {
+                "preferences_summary": rec.get("preferences_summary") or DEFAULT_PREFERENCES_SUMMARY,
+                "about_user": rec.get("about_user") or DEFAULT_ABOUT_USER,
+            }
+    except Exception as e:
+        print(f"[DB WARN] Could not fetch user_profile: {e}")
+
+    return {
+        "preferences_summary": DEFAULT_PREFERENCES_SUMMARY,
+        "about_user": DEFAULT_ABOUT_USER,
+    }
+
+
+def update_user_profile(config: Config, preferences_summary: str, about_user: str) -> bool:
+    """Upsert living user profile summary."""
+    try:
+        client = _client(config)
+        client.table("user_profile").upsert({
+            "id": 1,
+            "preferences_summary": preferences_summary.strip(),
+            "about_user": about_user.strip(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="id").execute()
+        return True
+    except Exception as e:
+        print(f"[DB ERROR] Failed to update user_profile: {e}")
+        return False
+

@@ -142,71 +142,67 @@ Instructions:
         return text.strip()
 
     async def process_reply(self, email_subject: str, email_body: str,
-                            current_prefs: list[dict],
+                            current_profile: dict,
                             current_events: list[dict]) -> dict:
-        """Process a user reply email and determine what changes to make.
+        """Process a user reply email and self-update living memory summaries.
 
-        Returns a dict with keys:
-        - action: 'add_pref', 'remove_pref', 'add_event', 'remove_event', or 'ack'
-        - details: dict with additional info
-        - reply_text: what to send back to the user
+        Returns dict with keys:
+        - updated_user_preferences: string (max 200 words)
+        - updated_about_user: string (max 200 words)
+        - event_action: dict or null (e.g. {"action": "add", "date": "YYYY-MM-DD", "description": "..."})
+        - reply_text: friendly email confirmation text
         """
-        system_prompt = f"""You are analyzing a user's reply to their daily news briefing email.
-The user wants you to extract actions to update their news preferences and reminders.
+        current_prefs = current_profile.get("preferences_summary", "")
+        current_about = current_profile.get("about_user", "")
 
-Current preferences:
-{json.dumps(current_prefs, indent=2)}
+        system_prompt = f"""You are an AI memory manager for DailyBriefer.
+You analyze user email replies to update the user's living profile memory.
 
-Current events/reminders:
+CURRENT USER PREFERENCES & STYLE SUMMARY (MAX 200 WORDS):
+{current_prefs}
+
+CURRENT ABOUT USER PROFILE (MAX 200 WORDS):
+{current_about}
+
+CURRENT EVENTS & REMINDERS:
 {json.dumps(current_events, indent=2) if current_events else "None"}
 
-Email subject: {email_subject}
-Email body: {email_body}
+INCOMING USER EMAIL:
+Subject: {email_subject}
+Body: {email_body}
 
-Your task:
-1. Analyze the email content for:
-   - New topics/interests the user wants to follow (add to preferences)
-   - Topics to remove from preferences
-   - New events/reminders (with dates)
-   - Events/reminders to cancel
-   - Or just a simple acknowledgment
+YOUR TASK:
+1. Analyze the email body for:
+   - Topic interests, writing style, tone preferences (e.g., GenZ slang, grumpy old man, concise, formal).
+   - Personal facts about the user (e.g., role, location, habits, background).
+   - Event reminders to add or cancel (with target dates).
+2. Update `updated_user_preferences` (string, MUST be <= 200 words). Add new topics/styles, prune/drop outdated choices if reaching length limits.
+3. Update `updated_about_user` (string, MUST be <= 200 words). Add new background facts, keep concise.
+4. Craft a warm, conversational `reply_text` written in the user's requested persona/tone.
 
-2. Respond with EXACTLY a JSON object (no markdown, no explanations, just raw JSON):
+Respond with EXACTLY a raw JSON object (no markdown formatting, no explanations):
 {{
-    "action": "add_pref" | "remove_pref" | "add_event" | "remove_event" | "ack",
-    "keyword": "the topic keyword",
-    "event_id": 123,
-    "event_date": "YYYY-MM-DD",
-    "event_description": "what to watch for",
-    "reply_text": "a friendly, conversational reply to the user"
-}}
-
-Examples:
-- User says "I love AI news" → {{"action": "add_pref", "keyword": "AI", "reply_text": "Got it! I'll add AI to your interests. Expect more AI news in future briefings!"}}
-- User says "Stop sending crypto news" → {{"action": "remove_pref", "keyword": "crypto", "reply_text": "Understood. I've removed crypto from your interests."}}
-- User says "Watch for World Cup final on 2025-06-25, send me highlights" → {{"action": "add_event", "event_date": "2025-06-25", "event_description": "World Cup final highlights", "reply_text": "I'll keep an eye on the World Cup final on June 25th and send you highlights!"}}
-- User says "Cancel the World Cup reminder" → {{"action": "remove_event", "event_id": 42, "reply_text": "Reminder cancelled."}}
-- User says "Thanks!" → {{"action": "ack", "reply_text": "Happy to help! Enjoy the rest of your day."}}
-
-Respond with ONLY valid JSON. Nothing else."""
+    "updated_user_preferences": "the full updated preferences & style summary string (max 200 words)",
+    "updated_about_user": "the full updated about user summary string (max 200 words)",
+    "event_action": null | {{"action": "add_event" | "remove_event", "date": "YYYY-MM-DD", "description": "...", "event_id": 123}},
+    "reply_text": "friendly reply to send back to user in their requested persona/tone"
+}}"""
 
         user_message = {
             "role": "user",
-            "content": "Analyze this email and determine what action to take."
+            "content": "Analyze the incoming email and output the updated memory JSON."
         }
 
-        context = f"""Current preferences:
-{json.dumps(current_prefs)}
+        response = await self._chat([user_message], system_prompt=system_prompt)
 
-Current events:
-{json.dumps(current_events)}"""
-
-        response = await self._chat([user_message], system_prompt=system_prompt + "\n\n" + context)
-
-        # Extract and parse JSON from response
         candidates = response.get("candidates", [])
         if not candidates:
-            return {"action": "ack", "reply_text": "I didn't understand that. Could you clarify?"}
+            return {
+                "updated_user_preferences": current_prefs,
+                "updated_about_user": current_about,
+                "event_action": None,
+                "reply_text": "Got it! Thanks for your email.",
+            }
 
         content = candidates[0].get("content", {})
         parts = content.get("parts", [])
@@ -214,9 +210,7 @@ Current events:
         for part in parts:
             text += part.get("text", "")
 
-        # Try to extract JSON from the response
         try:
-            # Gemini might wrap JSON in markdown code blocks
             text = text.strip()
             if text.startswith("```"):
                 lines = text.split("\n")
@@ -226,4 +220,10 @@ Current events:
             result = json.loads(text)
             return result
         except json.JSONDecodeError:
-            return {"action": "ack", "reply_text": "I'm sorry, I had trouble understanding that. Could you try rephrasing?"}
+            return {
+                "updated_user_preferences": current_prefs,
+                "updated_about_user": current_about,
+                "event_action": None,
+                "reply_text": "Understood! Updated your briefing preferences.",
+            }
+

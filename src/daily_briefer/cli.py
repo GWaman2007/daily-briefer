@@ -81,24 +81,24 @@ def run(ctx, mode):
 
 @cli.command(name="list-prefs")
 def list_prefs():
-    """List current user preferences."""
-    from daily_briefer.db import get_preferences, init_db
+    """List current user preferences & style memory."""
+    from daily_briefer.db import get_user_profile, init_db
     config = load_config()
     init_db(config)
-    prefs = get_preferences(config)
-    if not prefs:
-        click.echo("No preferences set yet.")
-    else:
-        click.echo("Your preferences:")
-        for p in prefs:
-            click.echo(f"  • {p['keyword']} (weight: {p['weight']})")
+    profile = get_user_profile(config)
+
+    console.print("[bold cyan]Living User Profile Memory[/bold cyan]")
+    console.print("\n[bold]User Preferences & Persona Style (max 200 words):[/bold]")
+    console.print(f"  {profile['preferences_summary']}")
+    console.print("\n[bold]About User Context (max 200 words):[/bold]")
+    console.print(f"  {profile['about_user']}")
 
 
 @cli.command()
 @click.pass_context
 def status(ctx):
     """Show system status."""
-    from daily_briefer.db import get_recent_briefs, get_recent_replies, get_upcoming_events, init_db
+    from daily_briefer.db import get_recent_briefs, get_recent_replies, get_upcoming_events, get_user_profile, init_db
     config = load_config()
     init_db(config)
 
@@ -106,6 +106,11 @@ def status(ctx):
     console.print(f"  Gmail: {'✓' if config.gmail_address else '✗'} {config.gmail_address or '(not configured)'}")
     console.print(f"  Tavily: {'✓' if config.tavily_api_key else '✗'} {'configured' if config.tavily_api_key else '(not configured)'}")
     console.print(f"  Gemini: {'✓' if config.gemini_api_key else '✗'} {'configured' if config.gemini_api_key else '(not configured)'}")
+
+    # Living Profile Summary
+    profile = get_user_profile(config)
+    console.print("\n[bold]Preferences & Persona Summary:[/bold]")
+    console.print(f"  {profile['preferences_summary']}")
 
     # Recent briefs
     briefs = get_recent_briefs(config)
@@ -125,6 +130,7 @@ def status(ctx):
             console.print(f"  • {e['date']}: {e['description']}")
     else:
         console.print("\nNo upcoming events.")
+
 
 
 if __name__ == "__main__":

@@ -32,7 +32,15 @@ CREATE TABLE IF NOT EXISTS reply_history (
     changes_applied TEXT
 );
 
+CREATE TABLE IF NOT EXISTS user_profile (
+    id INT PRIMARY KEY DEFAULT 1,
+    preferences_summary TEXT NOT NULL DEFAULT 'Focus on general world news, technology, AI breakthroughs, and major global events. Clear, engaging tone.',
+    about_user TEXT NOT NULL DEFAULT 'No data recorded yet.',
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_preferences_weight ON user_preferences(weight DESC);
 CREATE INDEX IF NOT EXISTS idx_events_date_status ON events(date, status);
 CREATE INDEX IF NOT EXISTS idx_briefs_date ON briefs(date);
+
