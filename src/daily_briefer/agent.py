@@ -73,7 +73,7 @@ class DailyBrieferAgent:
 
         Operational constraints:
         - Max 5 passes / iterations total.
-        - Initial pass generates multiple target search queries.
+        - Initial pass performs Tavily search for top preferences.
         - Strict daily quota of max 10 Tavily searches per run.
         - Live search budget feedback to the model.
         - Forces brief synthesis on pass 5.
@@ -88,7 +88,38 @@ class DailyBrieferAgent:
         search_queries = []
         model_memory = []
 
-        system_prompt = self._build_system_prompt(context)
+        # Perform initial search based on preferences or default news keywords
+        preferences = context.get("preferences", [])
+        keywords = [p.get("keyword") for p in preferences if isinstance(p, dict) and p.get("keyword")]
+
+        initial_queries = []
+        if keywords:
+            for kw in keywords[:3]:  # Top 3 preferences
+                initial_queries.append(f"{kw} news today")
+        else:
+            initial_queries.append("top technology breaking news today")
+
+        print(f"[Briefing] Performing initial Tavily search for: {', '.join(initial_queries)}...")
+        for q in initial_queries:
+            if tavily_searches_used < max_tavily_searches:
+                search_queries.append(q)
+                tavily_searches_used += 1
+                try:
+                    results = await self.tavily.search(q, max_results=10)
+                    all_articles.extend(results)
+                except Exception as e:
+                    print(f"[WARN] Tavily search error for '{q}': {e}")
+
+        # Deduplicate by URL
+        seen = set()
+        unique = []
+        for a in all_articles:
+            if a.get("url") and a.get("url") not in seen:
+                seen.add(a.get("url"))
+                unique.append(a)
+        all_articles = unique
+
+        system_prompt = self._build_system_prompt(context, all_articles)
 
         while iteration < max_iterations:
             iteration += 1
@@ -98,15 +129,13 @@ class DailyBrieferAgent:
                 f"Pass {iteration} of {max_iterations}:\n"
                 f"- Tavily searches used so far: {tavily_searches_used}/{max_tavily_searches} "
                 f"(Remaining budget: {searches_remaining})\n"
-                f"- Articles gathered so far: {len(all_articles)}\n"
+                f"- Total articles gathered so far: {len(all_articles)}\n"
                 f"- URLs already fetched: {len(fetched_urls)}\n"
-                f"- Previous search queries: {', '.join(search_queries) if search_queries else 'none yet'}\n"
+                f"- Previous search queries: {', '.join(search_queries)}\n"
             )
 
-            if iteration == 1:
-                status_msg += "\n[ACTION REQUIRED]: Review the user's preferences and events in the system prompt, then generate multiple targeted search queries using search_tavily to cover key interest topics."
-            elif iteration == max_iterations:
-                status_msg += "\n[FINAL PASS WARNING]: This is iteration 5 of 5. You MUST now call generate_brief with the final comprehensive markdown brief based on all gathered information."
+            if iteration == max_iterations:
+                status_msg += "\n[FINAL PASS WARNING]: This is iteration 5 of 5. You MUST now call generate_brief with the complete, beautifully formatted markdown briefing based on all the articles provided."
 
             model_memory.append({"role": "user", "content": status_msg})
 
@@ -115,7 +144,7 @@ class DailyBrieferAgent:
                     "function_declarations": [
                         {
                             "name": "search_tavily",
-                            "description": f"Search Tavily for news articles. Maximum search budget is {max_tavily_searches} total searches per run.",
+                            "description": f"Search Tavily for additional news articles. Maximum search budget is {max_tavily_searches} total searches per run.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
@@ -217,17 +246,26 @@ class DailyBrieferAgent:
 
                     elif func["name"] == "generate_brief":
                         brief = args.get("brief", "")
-                        if brief:
+                        if brief and len(brief.strip()) > 100:
                             model_memory[-1]["content"] += f"\n[Brief generated successfully: {len(brief)} characters]"
                             return brief
 
                 elif "text" in part:
-                    model_memory[-1]["content"] += part.get("text", "")
+                    text_content = part.get("text", "")
+                    model_memory[-1]["content"] += text_content
+                    # If model outputs brief directly in text without function call
+                    if len(text_content.strip()) > 200 and "# Daily" in text_content:
+                        return text_content.strip()
 
-        # If we exhausted 5 iterations without explicit generate_brief call, fallback to summary
+        # If we exhausted 5 iterations without explicit generate_brief call, generate brief with Gemini directly or fallback
+        if all_articles:
+            prompt_context = context.copy()
+            prompt_context["articles"] = all_articles
+            return await self.gemini.generate_brief(prompt_context)
+
         return self._fallback_brief(context, all_articles)
 
-    def _build_system_prompt(self, context: dict) -> str:
+    def _build_system_prompt(self, context: dict, articles: list[dict] | None = None) -> str:
         """Build the system prompt for the briefing loop with IST datetime context."""
         from datetime import datetime, timezone, timedelta
 
@@ -237,8 +275,18 @@ class DailyBrieferAgent:
 
         preferences = context.get("preferences", [])
         events = context.get("events", [])
+        articles_list = articles or []
 
-        return f"""You are an AI daily news briefer called DailyBriefer. Your job is to gather breaking & relevant news to synthesize an engaging daily briefing for {context.get('user_name', 'the user')}.
+        formatted_articles = ""
+        if articles_list:
+            formatted_articles = "ARTICLES FETCHED SO FAR:\n"
+            for i, a in enumerate(articles_list[:15], 1):
+                title = a.get("title", "Untitled")
+                url = a.get("url", "")
+                snippet = a.get("content", "")[:250]
+                formatted_articles += f"{i}. [{title}]({url})\n   Snippet: {snippet}\n\n"
+
+        return f"""You are an AI daily news briefer called DailyBriefer. Your job is to synthesize an engaging, informative daily news briefing for {context.get('user_name', 'the user')}.
 
 CURRENT IST TIME & DATE:
 {ist_time_str}
@@ -249,12 +297,14 @@ CURRENT USER PREFERENCES (Topics of interest):
 UPCOMING EVENTS & REMINDERS:
 {json.dumps(events, indent=2) if events else "No upcoming events registered."}
 
+{formatted_articles}
+
 OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
-1. Pass 1 (Initial Search): You MUST start by calling `search_tavily` with multiple relevant, specific search queries covering the user's top preferences and any upcoming event keywords.
+1. Review the articles provided above. If you need more specific details on a URL, call `fetch_url`. If you need more search results on a specific topic, call `search_tavily`.
 2. Tavily Search Quota: You have a strict limit of MAX 10 Tavily searches total per briefing run. Manage your query count carefully.
-3. Max 5 Iterations: You have at most 5 turns/passes. You must call `generate_brief(brief=...)` on or before Pass 5.
-4. If an article title or snippet needs deeper context, use `fetch_url`.
-5. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, source links, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
+3. Max 5 Iterations: You have at most 5 turns/passes. Call `generate_brief(brief=...)` with the full markdown text.
+4. Brief Formatting: Write a rich, engaging Markdown brief with sections, bullet points, headers, clickable article links `[Title](url)`, and emojis. Always include an "Upcoming Events / Reminders" section if there are events for today or nearby."""
+
 
 
     def _fallback_brief(self, context: dict, articles: list[dict]) -> str:
