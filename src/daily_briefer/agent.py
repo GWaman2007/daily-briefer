@@ -317,7 +317,7 @@ UPCOMING EVENTS & REMINDERS:
 {formatted_articles}
 
 OPERATIONAL CONSTRAINTS & INSTRUCTIONS:
-1. Review the articles and user preferences/style provided above. Strictly adopt the user's requested persona, tone, and style (e.g. GenZ slang, grumpy old man, formal executive, concise bullet points) when writing the briefing!
+1. Review the articles and user preferences/style provided above. Strictly adopt the user's requested persona, tone, and style (e.g. GenZ slang, grumpy old man, formal executive, concise bullet points DEFAULT_TONE: FORMAL AND POLITE) when writing the briefing!
 2. If you need more specific details on a URL, call `fetch_url`. If you need more search results on a specific topic, call `search_tavily`.
 3. Tavily Search Quota: You have a strict limit of MAX 6 Tavily searches total per briefing run. Manage your query count carefully.
 4. Max 5 Iterations: You have at most 5 turns/passes. Call `generate_brief(brief=...)` with the full markdown text.
